@@ -69,9 +69,7 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     {
         if (File.Exists(_path))
         {
-            using FileStream fs = new FileStream(_path, FileMode.Open);
-            using StreamReader reader = new StreamReader(fs);
-            string json = reader.ReadToEnd();
+            var json = File.ReadAllText(_path);
 
             var settings = new JsonSerializerSettings
             {
@@ -95,11 +93,8 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
         
         var json = JsonConvert.SerializeObject(_batches, settings);
 
-        using FileStream fs = new FileStream(_path, FileMode.Create);
-        using (StreamWriter writer = new StreamWriter(fs))
-        {
-            writer.Write(json);
-        }
+        //looks like StreamWriter has restrictions on WebGL platform
+        File.WriteAllText(_path, json);
     }
     
     public void TrackEvent(EventData eventData)
