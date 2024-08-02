@@ -18,17 +18,23 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     private string _path = Path.Combine(Application.streamingAssetsPath, "logs.json");
     
     private HttpClient _httpClient;
-    private CancellationToken _token = new CancellationToken();
+    private CancellationTokenSource _token = new CancellationTokenSource();
     
-    private Dictionary<string, List<EventData>> _butch;
+    private Dictionary<string, List<EventData>> _batches;
     private List<EventData> _pool = new List<EventData>();
     
-    void Start()
+    private void Start()
     {
         DontDestroyOnLoad(this);
         SetupConfigs();
         _httpClient = CreateHttpClient();
         CheckLogsFromPreviousSession();
+    }
+
+    private void OnDestroy()
+    {
+        _token.Dispose();
+        _httpClient.Dispose();
     }
 
     private void SetupConfigs()
@@ -47,11 +53,11 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     
     private void CheckLogsFromPreviousSession()
     {
-        _butch = ReadJson();
+        _batches = ReadJson();
 
-        if (_butch.Count <= 0) return;
+        if (_batches.Count <= 0) return;
         
-        foreach (var log in _butch[EVENTS])
+        foreach (var log in _batches[EVENTS])
         {
             TrackEvent(log);
         }
@@ -61,20 +67,16 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     {
         if (File.Exists(_path))
         {
-            using (FileStream fs = new FileStream(_path, FileMode.Open))
+            using FileStream fs = new FileStream(_path, FileMode.Open);
+            using StreamReader reader = new StreamReader(fs);
+            string json = reader.ReadToEnd();
+
+            var settings = new JsonSerializerSettings
             {
-                using (StreamReader reader = new StreamReader(fs))
-                {
-                    string json = reader.ReadToEnd();
+                Converters = new List<JsonConverter> { new EventLogsConverter() }
+            };
 
-                    var settings = new JsonSerializerSettings
-                    {
-                        Converters = new List<JsonConverter> { new EventLogsConverter() }
-                    };
-
-                    return JsonConvert.DeserializeObject<Dictionary<string, List<EventData>>>(json, settings);
-                }
-            }
+            return JsonConvert.DeserializeObject<Dictionary<string, List<EventData>>>(json, settings);
         }
         else
         {
@@ -89,14 +91,12 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
             Converters = new List<JsonConverter> { new EventLogsConverter() }
         };
         
-        var json = JsonConvert.SerializeObject(_butch, settings);
-        
-        using (FileStream fs = new FileStream(_path, FileMode.Create))
+        var json = JsonConvert.SerializeObject(_batches, settings);
+
+        using FileStream fs = new FileStream(_path, FileMode.Create);
+        using (StreamWriter writer = new StreamWriter(fs))
         {
-            using (StreamWriter writer = new StreamWriter(fs))
-            {
-                writer.Write(json);
-            }
+            writer.Write(json);
         }
     }
     
@@ -107,7 +107,7 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
         if (!_isCooldown)
         {            
             _isCooldown = true;
-            UniTask.Delay(TimeSpan.FromSeconds(_cooldown), ignoreTimeScale: false, cancellationToken: _token).ContinueWith(SendEvents);
+            UniTask.Delay(TimeSpan.FromSeconds(_cooldown), ignoreTimeScale: false, cancellationToken: _token.Token).ContinueWith(SendEvents);
         }
     }
 
@@ -115,15 +115,15 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     {
         try
         {
-            _butch[EVENTS] = _pool;
+            _batches[EVENTS] = _pool;
             _pool.Clear();
 
-            var json = JsonConvert.SerializeObject(_butch);
+            var json = JsonConvert.SerializeObject(_batches);
 
             using var request = new HttpRequestMessage(HttpMethod.Post, _url);
             request.Content = new StringContent(json);
 
-            using HttpResponseMessage response = await _httpClient.SendAsync(request, _token);
+            using HttpResponseMessage response = await _httpClient.SendAsync(request, _token.Token);
 
             if (!response.IsSuccessStatusCode)
             {
