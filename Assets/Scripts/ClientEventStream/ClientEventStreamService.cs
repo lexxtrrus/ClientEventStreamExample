@@ -15,7 +15,7 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     private bool _isCooldown = false;
     
     private const string EVENTS = "events";
-    private string _path = Path.Combine(Application.streamingAssetsPath, "logs.json");
+    private string _path;
     
     private HttpClient _httpClient;
     private CancellationTokenSource _token = new CancellationTokenSource();
@@ -39,6 +39,8 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
 
     private void SetupConfigs()
     {
+        _path = Path.Combine(Application.persistentDataPath, "logs.json");
+        
         var config = Resources.Load("Configs/CESConfig") as CESConfig;
         _url = config.URL;
         _cooldown = config.CooldownBeforeSend;
