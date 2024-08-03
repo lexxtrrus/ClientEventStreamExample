@@ -17,24 +17,30 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
     private const string EVENTS = "events";
     private string _path;
     
-    private HttpClient _httpClient;
-    private CancellationTokenSource _token = new CancellationTokenSource();
+    private CancellationTokenSource _cnlTokenSource = new CancellationTokenSource();
     
     private Dictionary<string, List<EventData>> _batches;
     private List<EventData> _pool = new List<EventData>();
+
+    private IPostRequestSender _postRequestSender;
     
     private void Start()
     {
         DontDestroyOnLoad(this);
+        
+#if UNITY_WEBGL
+        _postRequestSender = new WebGLClientImpl();
+#else
+        _postRequestSender = new HttpClientImpl(_cnlTokenSource.Token);
+#endif
+        
         SetupConfigs();
-        _httpClient = CreateHttpClient();
         CheckLogsFromPreviousSession();
     }
 
     private void OnDestroy()
     {
-        _token.Dispose();
-        _httpClient.Dispose();
+        _cnlTokenSource.Dispose();
     }
 
     private void SetupConfigs()
@@ -93,7 +99,6 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
         
         var json = JsonConvert.SerializeObject(_batches, settings);
 
-        //looks like StreamWriter has restrictions on WebGL platform
         File.WriteAllText(_path, json);
     }
     
@@ -104,7 +109,7 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
         if (!_isCooldown)
         {            
             _isCooldown = true;
-            UniTask.Delay(TimeSpan.FromSeconds(_cooldown), ignoreTimeScale: false, cancellationToken: _token.Token).ContinueWith(SendEvents);
+            UniTask.Delay(TimeSpan.FromSeconds(_cooldown), ignoreTimeScale: false, cancellationToken: _cnlTokenSource.Token).ContinueWith(SendEvents);
         }
     }
 
@@ -117,12 +122,9 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
 
             var json = JsonConvert.SerializeObject(_batches);
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, _url);
-            request.Content = new StringContent(json);
+            var success = await _postRequestSender.PostAsync(_url, json);
 
-            using HttpResponseMessage response = await _httpClient.SendAsync(request, _token.Token);
-
-            if (!response.IsSuccessStatusCode)
+            if (!success)
             {
                 WriteJson();
             }
@@ -134,7 +136,6 @@ public class ClientEventStreamService : MonoBehaviour, IClientEventStreamSender
         finally
         {
             _isCooldown = false;
-
         }
     }
 }
